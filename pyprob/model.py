@@ -5,12 +5,13 @@ import os
 import math
 import random
 from termcolor import colored
+import subprocess, os, signal # For remote model process
 
 from .distributions import Empirical
 from . import util, state, TraceMode, PriorInflation, InferenceEngine, InferenceNetwork, ImportanceWeighting, Optimizer, LearningRateScheduler, AddressDictionary
 from .nn import InferenceNetwork as InferenceNetworkBase
 from .nn import OnlineDataset, OfflineDataset, InferenceNetworkFeedForward, InferenceNetworkLSTM
-from .remote import ModelServer
+from .remote import ModelServer, ZeroLikelihoodException
 
 
 class Model():
@@ -30,7 +31,14 @@ class Model():
         state._init_traces(func=self.forward, trace_mode=trace_mode, prior_inflation=prior_inflation, inference_engine=inference_engine, inference_network=inference_network, observe=observe, metropolis_hastings_trace=metropolis_hastings_trace, address_dictionary=self._address_dictionary, likelihood_importance=likelihood_importance, importance_weighting=importance_weighting)
         while True:
             state._begin_trace()
-            result = self.forward(*args, **kwargs)
+            try:
+                result = self.forward(*args, **kwargs)
+            except ZeroLikelihoodException as e:
+                if isinstance(self, RemoteModel):
+                    self.restart_process()
+                    continue
+                else:
+                    raise e
             trace = state._end_trace(result)
             yield trace
 
@@ -44,6 +52,7 @@ class Model():
             len_str_num_traces = len(str(num_traces))
             print('Time spent  | Time remain.| Progress             | {} | Traces/sec'.format('Trace'.ljust(len_str_num_traces * 2 + 1)))
             prev_duration = 0
+
         for i in range(num_traces):
             if (util._verbosity > 1) and not silent:
                 duration = time.time() - time_start
@@ -201,11 +210,15 @@ class Model():
 
 
 class RemoteModel(Model):
-    def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None, *args, **kwargs):
+    def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None, model_executable=None, *args, **kwargs):
         self._server_address = server_address
         self._model_server = None
         self._before_forward_func = before_forward_func  # Optional mthod to run before each forward call of the remote model (simulator)
         self._after_forward_func = after_forward_func  # Optional method to run after each forward call of the remote model (simulator)
+        self._model_executable = model_executable
+        self._model_process = None
+        if self._model_executable is not None:
+            self.restart_process()
         super().__init__(*args, **kwargs)
 
     def close(self):
@@ -224,3 +237,19 @@ class RemoteModel(Model):
         if self._after_forward_func is not None:
             self._after_forward_func()
         return ret
+
+    def restart_process(self):
+        killed = self.kill_process()
+        self._model_process = subprocess.Popen('{} {} > /dev/null &'.format(self._model_executable, self._server_address), shell=True, preexec_fn=os.setsid)
+
+        if killed:
+            # Restart the model server
+            self._model_server.close(print_flag=False)
+            self._model_server = ModelServer(self._server_address, print_flag=False)
+
+    def kill_process(self):
+        if self._model_process is not None:
+            os.killpg(os.getpgid(self._model_process.pid), signal.SIGTERM)
+            self._model_process = None
+            return True
+        return False

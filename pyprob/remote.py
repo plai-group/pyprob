@@ -26,13 +26,17 @@ from .ppx import TagResult as ppx_TagResult
 from .ppx import Reset as ppx_Reset
 
 
+class ZeroLikelihoodException(Exception):
+    pass
+
 class ZMQRequester():
-    def __init__(self, server_address):
+    def __init__(self, server_address, print_flag=True):
         self._server_address = server_address
         self._context = zmq.Context.instance()
         self._socket = self._context.socket(zmq.REQ)
         self._socket.setsockopt(zmq.LINGER, 100)
-        print('ppx (Python): zmq.REQ socket connecting to server {}'.format(self._server_address))
+        if print_flag:
+            print('ppx (Python): zmq.REQ socket connecting to server {}'.format(self._server_address))
         self._socket.connect(self._server_address)
 
     def __enter__(self):
@@ -44,11 +48,12 @@ class ZMQRequester():
     def __del__(self):
         self.close()
 
-    def close(self):
+    def close(self, print_flag=True):
         if not self._socket.closed:
             self._socket.close()
             self._context.destroy()
-            print('ppx (Python): zmq.REQ socket disconnected from server {}'.format(self._server_address))
+            if print_flag:
+                print('ppx (Python): zmq.REQ socket disconnected from server {}'.format(self._server_address))
 
     def send_request(self, request):
         self._socket.send(request)
@@ -58,12 +63,13 @@ class ZMQRequester():
 
 
 class ModelServer(object):
-    def __init__(self, server_address):
-        self._requester = ZMQRequester(server_address)
+    def __init__(self, server_address, print_flag=True):
+        self._requester = ZMQRequester(server_address, print_flag=print_flag)
         self.system_name, self.model_name = self._handshake()
-        print('ppx (Python): This system        : {}'.format(colored('pyprob {}'.format(__version__), 'green')))
-        print('ppx (Python): Connected to system: {}'.format(colored(self.system_name, 'green')))
-        print('ppx (Python): Model name         : {}'.format(colored(self.model_name, 'green', attrs=['bold'])))
+        if print_flag:
+            print('ppx (Python): This system        : {}'.format(colored('pyprob {}'.format(__version__), 'green')))
+            print('ppx (Python): Connected to system: {}'.format(colored(self.system_name, 'green')))
+            print('ppx (Python): Model name         : {}'.format(colored(self.model_name, 'green', attrs=['bold'])))
 
     def __enter__(self):
         return self
@@ -74,8 +80,8 @@ class ModelServer(object):
     def __del__(self):
         self.close()
 
-    def close(self):
-        self._requester.close()
+    def close(self, print_flag=True):
+        self._requester.close(print_flag=print_flag)
 
     def _protocol_tensor_to_variable(self, protocol_tensor):
         if protocol_tensor is None:
@@ -267,7 +273,9 @@ class ModelServer(object):
                 else:
                     raise RuntimeError('ppx (Python): Sample from an unexpected distribution requested: {}'.format(distribution_type))
 
-                state.observe(distribution=dist, value=value, name=name, address=address)
+                err = state.observe(distribution=dist, value=value, name=name, address=address, error_on_zero_likelihood=True)
+                if err:
+                    raise ZeroLikelihoodException(name)
                 builder = flatbuffers.Builder(64)
                 ppx_ObserveResult.ObserveResultStart(builder)
                 message_body = ppx_ObserveResult.ObserveResultEnd(builder)

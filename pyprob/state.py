@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import sys
 import opcode
 import random
@@ -112,7 +113,7 @@ def tag(value, name=None, address=None):
     _current_trace.add(variable)
 
 
-def observe(distribution, value=None, name=None, address=None):
+def observe(distribution, value=None, name=None, address=None, error_on_zero_likelihood=False):
     global _current_trace
     if address is None:
         address_base = _extract_address(_current_trace_root_function_name) + '__' + distribution._address_suffix
@@ -139,6 +140,9 @@ def observe(distribution, value=None, name=None, address=None):
 
     variable = Variable(distribution=distribution, value=value, address_base=address_base, address=address, instance=instance, log_prob=log_prob, log_importance_weight=log_importance_weight, observed=True, name=name)
     _current_trace.add(variable)
+    
+    if error_on_zero_likelihood:
+        return torch.any(np.isinf(distribution.log_prob(value, sum=True)))
 
 
 def sample(distribution, control=True, replace=False, name=None, address=None):
