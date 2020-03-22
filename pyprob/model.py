@@ -41,6 +41,9 @@ class Model():
                     raise e
             trace = state._end_trace(result)
             yield trace
+            if isinstance(self, RemoteModel):
+                self.trace_idx += 1
+                self.restart_process()
 
     def _traces(self, num_traces=10, trace_mode=TraceMode.PRIOR, prior_inflation=PriorInflation.DISABLED, inference_engine=InferenceEngine.IMPORTANCE_SAMPLING, inference_network=None, map_func=None, silent=False, observe=None, file_name=None, likelihood_importance=1., *args, **kwargs):
         generator = self._trace_generator(trace_mode=trace_mode, prior_inflation=prior_inflation, inference_engine=inference_engine, inference_network=inference_network, observe=observe, likelihood_importance=likelihood_importance, *args, **kwargs)
@@ -210,14 +213,17 @@ class Model():
 
 
 class RemoteModel(Model):
-    def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None, model_executable=None, *args, **kwargs):
+    def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None,
+                 model_dispatcher=None, *args, **kwargs):
         self._server_address = server_address
         self._model_server = None
         self._before_forward_func = before_forward_func  # Optional mthod to run before each forward call of the remote model (simulator)
         self._after_forward_func = after_forward_func  # Optional method to run after each forward call of the remote model (simulator)
-        self._model_executable = model_executable
+        self._model_dispatcher = model_dispatcher
         self._model_process = None
-        if self._model_executable is not None:
+        self._connected = False
+        self.trace_idx = 0
+        if self._model_dispatcher is not None:
             self.restart_process()
         super().__init__(*args, **kwargs)
 
@@ -230,6 +236,7 @@ class RemoteModel(Model):
         if self._model_server is None:
             self._model_server = ModelServer(self._server_address)
             self.name = '{} running on {}'.format(self._model_server.model_name, self._model_server.system_name)
+            self._connected = True
 
         if self._before_forward_func is not None:
             self._before_forward_func()
@@ -239,10 +246,10 @@ class RemoteModel(Model):
         return ret
 
     def restart_process(self):
-        killed = self.kill_process()
-        self._model_process = subprocess.Popen('{} {} > /dev/null &'.format(self._model_executable, self._server_address), shell=True, preexec_fn=os.setsid)
+        self.kill_process()
+        self._model_process = self._model_dispatcher(trace_idx=self.trace_idx)
 
-        if killed:
+        if self._connected:
             # Restart the model server
             self._model_server.close(print_flag=False)
             self._model_server = ModelServer(self._server_address, print_flag=False)
@@ -251,5 +258,3 @@ class RemoteModel(Model):
         if self._model_process is not None:
             os.killpg(os.getpgid(self._model_process.pid), signal.SIGTERM)
             self._model_process = None
-            return True
-        return False
