@@ -43,7 +43,8 @@ class Model():
             yield trace
             if isinstance(self, RemoteModel):
                 self.trace_idx += 1
-                self.restart_process()
+                if self._restart_per_trace:
+                    self.restart_process()
 
     def _traces(self, num_traces=10, trace_mode=TraceMode.PRIOR, prior_inflation=PriorInflation.DISABLED, inference_engine=InferenceEngine.IMPORTANCE_SAMPLING, inference_network=None, map_func=None, silent=False, observe=None, file_name=None, likelihood_importance=1., *args, **kwargs):
         generator = self._trace_generator(trace_mode=trace_mode, prior_inflation=prior_inflation, inference_engine=inference_engine, inference_network=inference_network, observe=observe, likelihood_importance=likelihood_importance, *args, **kwargs)
@@ -214,7 +215,7 @@ class Model():
 
 class RemoteModel(Model):
     def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None,
-                 model_dispatcher=None, *args, **kwargs):
+                 model_dispatcher=None, restart_per_trace=False, *args, **kwargs):
         self._server_address = server_address
         self._model_server = None
         self._before_forward_func = before_forward_func  # Optional mthod to run before each forward call of the remote model (simulator)
@@ -222,6 +223,7 @@ class RemoteModel(Model):
         self._model_dispatcher = model_dispatcher
         self._model_process = None
         self._connected = False
+        self._restart_per_trace = restart_per_trace
         self.trace_idx = 0
         if self._model_dispatcher is not None:
             self.restart_process()
