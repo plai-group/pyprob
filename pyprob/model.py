@@ -35,8 +35,9 @@ class Model():
                 result = self.forward(*args, **kwargs)
             except ZeroLikelihoodException as e:
                 if isinstance(self, RemoteModel):
-                    self.restart_process()
-                    continue
+                    #self.restart_process()
+                    result = None
+                    pass # The resulting trace would be incomplete, but with zero likelihood
                 else:
                     raise e
             trace = state._end_trace(result)
@@ -215,7 +216,7 @@ class Model():
 
 class RemoteModel(Model):
     def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None,
-                 model_dispatcher=None, restart_per_trace=False, *args, **kwargs):
+                 model_dispatcher=None, restart_per_trace=False, kill_on_zero_likelihood=False, *args, **kwargs):
         self._server_address = server_address
         self._model_server = None
         self._before_forward_func = before_forward_func  # Optional mthod to run before each forward call of the remote model (simulator)
@@ -225,6 +226,7 @@ class RemoteModel(Model):
         self._connected = False
         self._restart_per_trace = restart_per_trace
         self.trace_idx = 0
+        self._kill_on_zero_likelihood = kill_on_zero_likelihood
         if self._model_dispatcher is not None:
             self.restart_process()
         super().__init__(*args, **kwargs)
@@ -236,7 +238,7 @@ class RemoteModel(Model):
 
     def forward(self):
         if self._model_server is None:
-            self._model_server = ModelServer(self._server_address)
+            self._model_server = ModelServer(self._server_address, kill_on_zero_likelihood=self._kill_on_zero_likelihood)
             self.name = '{} running on {}'.format(self._model_server.model_name, self._model_server.system_name)
             self._connected = True
 
@@ -254,7 +256,7 @@ class RemoteModel(Model):
         if self._connected:
             # Restart the model server
             self._model_server.close(print_flag=False)
-            self._model_server = ModelServer(self._server_address, print_flag=False)
+            self._model_server = ModelServer(self._server_address, print_flag=False, kill_on_zero_likelihood=self._kill_on_zero_likelihood)
 
     def kill_process(self):
         if self._model_process is not None:

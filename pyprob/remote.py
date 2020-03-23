@@ -63,7 +63,8 @@ class ZMQRequester():
 
 
 class ModelServer(object):
-    def __init__(self, server_address, print_flag=True):
+    def __init__(self, server_address, print_flag=True, kill_on_zero_likelihood=False):
+        self._kill_on_zero_likelihood = kill_on_zero_likelihood
         self._requester = ZMQRequester(server_address, print_flag=print_flag)
         self.system_name, self.model_name = self._handshake()
         if print_flag:
@@ -274,7 +275,7 @@ class ModelServer(object):
                     raise RuntimeError('ppx (Python): Sample from an unexpected distribution requested: {}'.format(distribution_type))
 
                 err = state.observe(distribution=dist, value=value, name=name, address=address, error_on_zero_likelihood=True)
-                if err:
+                if err and self._kill_on_zero_likelihood:
                     raise ZeroLikelihoodException(name)
                 builder = flatbuffers.Builder(64)
                 ppx_ObserveResult.ObserveResultStart(builder)
