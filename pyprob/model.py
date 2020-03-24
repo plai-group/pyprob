@@ -6,6 +6,7 @@ import math
 import random
 from termcolor import colored
 import subprocess, os, signal # For remote model process
+import uuid
 
 from .distributions import Empirical
 from . import util, state, TraceMode, PriorInflation, InferenceEngine, InferenceNetwork, ImportanceWeighting, Optimizer, LearningRateScheduler, AddressDictionary
@@ -215,9 +216,12 @@ class Model():
 
 
 class RemoteModel(Model):
-    def __init__(self, server_address='tcp://127.0.0.1:5555', before_forward_func=None, after_forward_func=None,
-                 model_dispatcher=None, restart_per_trace=False, kill_on_zero_likelihood=False, *args, **kwargs):
+    def __init__(self, server_address=None, before_forward_func=None, after_forward_func=None,
+                 model_dispatcher=None, restart_per_trace=False, kill_on_zero_likelihood=False,
+                 random_server_address=False, *args, **kwargs):
+        assert server_address is not None or random_server_address
         self._server_address = server_address
+        self._random_server_address = random_server_address
         self._model_server = None
         self._before_forward_func = before_forward_func  # Optional mthod to run before each forward call of the remote model (simulator)
         self._after_forward_func = after_forward_func  # Optional method to run after each forward call of the remote model (simulator)
@@ -251,7 +255,10 @@ class RemoteModel(Model):
 
     def restart_process(self):
         self.kill_process()
-        self._model_process = self._model_dispatcher(trace_idx=self.trace_idx)
+        if self._random_server_address:
+            self._server_address = f'ipc://@RemoteModel:{uuid.uuid4().hex}'
+        self._model_process = self._model_dispatcher(trace_idx=self.trace_idx,
+                                                     server_address=self._server_address)
 
         if self._connected:
             # Restart the model server
